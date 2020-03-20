@@ -161,7 +161,10 @@ class UserJob:
         return is_login
 
     def auth_uamtk(self):
-        response = self.session.post(API_AUTH_UAMTK.get('url'), {'appid': 'otn'})
+        response = self.session.post(API_AUTH_UAMTK.get('url'), {'appid': 'otn'}, headers={
+            'Referer': 'https://kyfw.12306.cn/otn/passport?redirect=/otn/login/userLogin',
+            'Origin': 'https://kyfw.12306.cn'
+        })
         result = response.json()
         if result.get('newapptk'):
             return result.get('newapptk')
@@ -194,10 +197,16 @@ class UserJob:
                 if response.text.find('callbackFunction') >= 0:
                     result = response.text[18:-2]
                 result = json.loads(result)
-                self.session.cookies.update({
-                    'RAIL_EXPIRATION': result.get('exp'),
-                    'RAIL_DEVICEID': result.get('dfp'),
-                })
+                if not Config().is_cache_rail_id_enabled():
+                   self.session.cookies.update({
+                       'RAIL_EXPIRATION': result.get('exp'),
+                       'RAIL_DEVICEID': result.get('dfp'),
+                   })
+                else:
+                   self.session.cookies.update({
+                       'RAIL_EXPIRATION': Config().RAIL_EXPIRATION,
+                       'RAIL_DEVICEID': Config().RAIL_DEVICEID,
+                   })
             except:
                 return False
 
@@ -408,12 +417,16 @@ class UserJob:
         # 系统忙，请稍后重试
         if html.find('系统忙，请稍后重试') != -1:
             OrderLog.add_quick_log(OrderLog.MESSAGE_REQUEST_INIT_DC_PAGE_FAIL).flush()  # 重试无用，直接跳过
-            return False
+            return False, False, html
         try:
             self.global_repeat_submit_token = token.groups()[0]
             self.ticket_info_for_passenger_form = json.loads(form.groups()[0].replace("'", '"'))
             self.order_request_dto = json.loads(order.groups()[0].replace("'", '"'))
         except:
-            return False  # TODO Error
+            return False, False, html  # TODO Error
 
-        return True
+        slide_val = re.search(r"var if_check_slide_passcode.*='(\d?)'", html)
+        is_slide = False
+        if slide_val:
+            is_slide = int(slide_val[1]) == 1
+        return True, is_slide, html
